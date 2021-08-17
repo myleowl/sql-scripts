@@ -1,0 +1,35 @@
+select user_id, start_session, end_session 
+    from(
+        select user_id, start_session, end_session, duration, session_string
+        from (
+            select *,
+                listagg(page_id::varchar, ' '  ) over (partition by user_id, all_session_id) as session_string,
+                min(happened_at) over (partition by all_session_id) as start_session,
+                dateadd(hour, 1, max(happened_at) over (partition by all_session_id)) as end_session,
+                datediff(minute, start_session, end_session) as duration
+            from (
+                select *, 
+                sum(is_new_session) over (order by user_id, happened_at rows between unbounded preceding and current row) as all_session_id,
+                sum(is_new_session) over (partition by user_id order by happened_at rows between unbounded preceding and current row) as user_session_id
+            
+                from (
+                    select *,  
+                        case when extract('epoch' from happened_at) - extract('epoch' from prev_action)>=3600 or prev_action is NULL
+                            then 1 else 0 end as is_new_session,
+                        case when page in ('rooms.homework-showcase') then 1 
+                            when page in ('rooms.view.step.content') then 2 
+                            when page in ('rooms.lesson.rev.step.content') then 3 else 0 end as page_id
+                    from (
+                        select user_id, page, happened_at, 
+                            lag(happened_at, 1) over (partition by user_id order by happened_at ASC) as prev_action
+                        from test.vimbox_pages 
+                        order by happened_at, prev_action
+                    ) prev_0
+                ) prev_1
+                order by user_id, user_session_id
+            ) prev_3
+        ) prev_4
+        group by 1,2,3,4,5
+        having session_string like '%1%2%3%'
+) final
+order by user_id
